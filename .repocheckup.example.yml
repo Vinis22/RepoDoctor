@@ -1,0 +1,11 @@
+ignore_paths:
+  - vendor
+  - fixtures
+
+exceptions:
+  - check: quality.large_files
+    path: assets/demo_video.mp4
+  - check: structure.license
+
+max_file_size_mb: 10
+recent_commit_days: 120

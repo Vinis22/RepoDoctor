@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RepoDoctor</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="header-row">
+        <div>
+          <div class="logo">RepoDoctor</div>
+          <p class="tagline">Structure, quality and security, audited locally.</p>
+        </div>
+        <form method="post" action="/run" id="run-form">
+          <button type="submit" class="run-button" id="run-button">{% if report is none %}Run audit{% else %}Re-run audit{% endif %}</button>
+        </form>
+      </div>
+    </header>
+
+    <section class="card loading-card" id="loading-card" hidden>
+      <div class="loading-title" id="loading-title">Running audit</div>
+      <div class="steps-track" id="steps-track">
+        <div class="steps-line" id="steps-line"></div>
+        <div class="steps-line-fill" id="steps-fill"></div>
+        <ul class="steps" id="loading-steps">
+          <li><span class="dot"></span><span>Scanning structure</span></li>
+          <li><span class="dot"></span><span>Scanning quality</span></li>
+          <li><span class="dot"></span><span>Scanning security</span></li>
+          <li><span class="dot"></span><span>Calculating score</span></li>
+        </ul>
+      </div>
+    </section>
+
+    {% if report is none %}
+    <section class="card empty-state">
+      <p>No report found at <code>{{ report_path }}</code>.</p>
+      <p class="muted">Click "Run audit" above, or run <code>repocheckup .</code> from the CLI.</p>
+    </section>
+    {% else %}
+
+    <section class="card score-card">
+      <div class="score score-{{ grade|lower }}">
+        <span class="score-value">{{ report.score }}</span>
+        <span class="score-max">/100</span>
+      </div>
+      <div class="score-meta">
+        <div class="grade">Grade {{ grade }}</div>
+        <div class="repo-path">{{ report.repo_path }}</div>
+        {% if report.has_critical_failure %}
+        <div class="critical-flag">Critical issues found</div>
+        {% endif %}
+      </div>
+    </section>
+
+    {% for group in groups %}
+    <section class="card">
+      <h2>{{ group.label }}</h2>
+      <ul class="checks">
+        {% for check in group.checks %}
+        <li class="check {% if check.skipped %}status-skip{% elif check.passed %}status-ok{% else %}status-{{ check.severity }}{% endif %}">
+          <span class="badge">
+            {% if check.skipped %}SKIP{% elif check.passed %}OK{% elif check.severity == 'critical' %}CRIT{% else %}WARN{% endif %}
+          </span>
+          <div class="check-body">
+            <div class="check-message">{{ check.message }}</div>
+            {% if check.details %}
+            <ul class="details">
+              {% for detail in check.details[:5] %}
+              <li>{{ detail }}</li>
+              {% endfor %}
+              {% if check.details|length > 5 %}
+              <li class="muted">... and {{ check.details|length - 5 }} more</li>
+              {% endif %}
+            </ul>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+    {% endif %}
+
+    <footer class="footer">
+      <span>local · no external API · reads {{ report_path }}</span>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById("run-form");
+      var button = document.getElementById("run-button");
+      var loadingCard = document.getElementById("loading-card");
+      var loadingTitle = document.getElementById("loading-title");
+      var stepsTrack = document.getElementById("steps-track");
+      var stepsLine = document.getElementById("steps-line") || stepsTrack.querySelector(".steps-line");
+      var stepsFill = document.getElementById("steps-fill");
+      var steps = loadingCard.querySelectorAll("li");
+      var originalLabel = button.textContent;
+
+      function dotCenters() {
+        var trackTop = stepsTrack.getBoundingClientRect().top;
+        return Array.prototype.map.call(loadingCard.querySelectorAll(".dot"), function (dot) {
+          var rect = dot.getBoundingClientRect();
+          return rect.top + rect.height / 2 - trackTop;
+        });
+      }
+
+      function layoutTrack(centers) {
+        stepsLine.style.top = centers[0] + "px";
+        stepsLine.style.height = (centers[centers.length - 1] - centers[0]) + "px";
+        stepsFill.style.top = centers[0] + "px";
+      }
+
+      function setProgress(centers, activeCount) {
+        if (activeCount <= 0) {
+          stepsFill.style.height = "0px";
+          return;
+        }
+        var idx = Math.min(activeCount, centers.length) - 1;
+        stepsFill.style.height = (centers[idx] - centers[0]) + "px";
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        button.disabled = true;
+        button.textContent = "Running...";
+        loadingTitle.textContent = "Running audit";
+        loadingTitle.classList.remove("error");
+        loadingCard.hidden = false;
+        steps.forEach(function (step) { step.classList.remove("active", "pending"); });
+
+        var centers = dotCenters();
+        layoutTrack(centers);
+        setProgress(centers, 0);
+
+        var lastIndex = steps.length - 1;
+        var stepIndex = -1;
+        var ticker;
+
+        function advance() {
+          if (stepIndex >= lastIndex) return;
+          stepIndex++;
+          steps[stepIndex].classList.add("active");
+          setProgress(centers, stepIndex + 1);
+          if (stepIndex === lastIndex) {
+            steps[lastIndex].classList.add("pending");
+            clearInterval(ticker);
+          }
+        }
+
+        advance();
+        ticker = setInterval(advance, 3000);
+
+        fetch("/run", { method: "POST" })
+          .then(function (response) {
+            clearInterval(ticker);
+            if (!response.ok) throw new Error("audit failed");
+            steps.forEach(function (step) {
+              step.classList.add("active");
+              step.classList.remove("pending");
+            });
+            setProgress(centers, steps.length);
+            setTimeout(function () { window.location.href = "/"; }, 250);
+          })
+          .catch(function () {
+            clearInterval(ticker);
+            steps.forEach(function (step) { step.classList.remove("pending"); });
+            loadingTitle.textContent = "Audit failed — check the server logs.";
+            loadingTitle.classList.add("error");
+            button.disabled = false;
+            button.textContent = originalLabel;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

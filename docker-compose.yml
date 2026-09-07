@@ -1,0 +1,18 @@
+services:
+  cli:
+    build: .
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+
+  web:
+    build: .
+    entrypoint: ["uvicorn", "repodoctor.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      - REPORT_PATH=/workspace/repocheckup.json
+      - AUDIT_PATH=/workspace
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
